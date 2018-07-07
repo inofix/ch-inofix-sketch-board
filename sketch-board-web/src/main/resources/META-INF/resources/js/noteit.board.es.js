@@ -106,7 +106,10 @@ export class SketchBoard {
      */
         var json = startIndent + "{\n";
         for (let n of this.adhesives.values()) {
-            json += n.toJSON(indent, startIndent + indent) + ",\n";
+            let nj = n.toJSON(indent, startIndent + indent);
+            if (typeof nj === 'string' && nj !== '') {
+                json += n.toJSON(indent, startIndent + indent) + ",\n";
+            }
         }
         if (json.length > 2) {
             json = json.substring(0, json.length - 2) + "\n" +
@@ -194,6 +197,7 @@ export class Adhesive {
         this.geometry = geometry;
         this.group.attr("transform", "translate(" + position[0] + "," + position[1] + ")");
         this.position = position;
+        this.translatePosition = [0,0];
         let strokeColor = "#000000";
         if (board.dark) {
             strokeColor = "#ffffff";
@@ -201,55 +205,60 @@ export class Adhesive {
         this.paper.style("fill", color[0])
                 .style("stroke", strokeColor)
                 .style("stroke-width", "1px");
+        // whether it can be persisted with toJSON
+        this.persistable = true;
+        this.persistableChildren = true;
         return this;
     }
 
     // set the basic features separatly from the constructor for more
     // control over super classes
-    setFeatures(handles=["close", "new"], draggable=true, type) {
+    setFeatures(handles=["close", "new"], draggable=true, persistable=true, type) {
 
         if (draggable) {
             this.enableDrag();
         }
+        this.persistable = persistable;
+        this.persistableChildren = persistable;
         if (typeof type === 'string') {
             this.addType(type);
         }
         this.addHandles(handles);
     }
 
+    translate(delta=[0,0]) {
+
+        this.translatePosition = delta;
+        if (this.draggable) {
+            this.enableDrag();
+        }
+        this.group.raise().attr("transform", "translate(" + delta[0] +
+                    "," + delta[1] + ")");
+    }
+
     addType(type="Type") {
 
         let l = this.geometry[0] / 2;
         this.type = this.group.append("g").attr("class", "type");
-        // placeholder in case the string below ('nt') is empty
-//        var rt = this.type.append("rect")
-//                    .attr("fill", "#ffffff").attr("fill-opacity", "0")
-//                    .attr("width", l + "em").attr("height", "0.8em")
-//                    .attr("x", "1em").attr("y", "1em");
         var nt = this.type.append("text")
-                    .attr("x", "1em").attr("y", "1em")
+                    .attr("x", "1.4em").attr("y", "1em")
                     .attr("width", l + "em").attr("height", "0.8em")
                     .style("font-size", "0.8em")
                     .attr("fill", "grey")
                     .text(type);
-//        var n = this;
-        // add the event to both nodes, as sometimes the text is small,
-        // sometimes big...
-//TODO: I'd prefer "focus/blur" here. Collision with "drag"?
-//        nt.on("drag", null);
-//        rt.on("mouseover", function() { n.openTextinput(n.type, [1,0], [l,1])});
-//        nt.on("mouseover", function() { n.openTextinput(n.type, [1,0], [l,1])});
     }
 
-    // multi workaround:
-    // workaround the contenteditable issues in chrome and the raise problems
-    // in firefox... svg does not support contenteditable (only globally),
-    // foreignObject makes problems with z-index/raise() and finally
-    // contentediable in div's break newline support in js?!!
-    // (note to myself: that is exactly why I always prefered
-    // backend to web development..)
-//TODO: this is all not really working well - let's transform this into
-//      a handle which lets then edit all the contents at once ...
+    toggleTextEdit(textelement, position, geometry) {
+
+        var foreign = textelement.select("foreignObject");
+        if (foreign.size() > 0) {
+            this.setMultilineText(textelement, position,
+                                    foreign.node().textContent);
+        } else {
+            this.openTextinput(textelement, position, geometry);
+        }
+    }
+
     openTextinput(textelement, position, geometry) {
         var textnode = textelement.select("text");
         var t = "";
@@ -271,16 +280,15 @@ export class Adhesive {
                 .text(t);
 
         textnode.text("");
-//        d.on("click", function() { d.node().focus();});
-//TODO: I'd prefer "focus/blur" here. Collision with "drag"?
-        var n = this;
         d.on("blur", function () {
-            n.setMultilineText(textnode, position, d.node().value, foreign);
+            d.text(d.node().value);
         });
     }
 
-    setMultilineText(textnode, position, text, foreign) {
+    setMultilineText(textelement, position, text) {
 
+        var textnode = textelement.select("text");
+        var foreign = textelement.select("foreignObject");
         textnode.text("");
         if (typeof foreign === 'undefined') {
             text = text.split("<br/>");
@@ -293,7 +301,7 @@ export class Adhesive {
                 // calc the distance from to for the next tspan
                 let tY = i + position[1] + 1;
                 let tI = textnode.append("tspan")
-                            .attr("x", "8px").attr("y", tY + "em");
+                            .attr("x", position[0] + "em").attr("y", tY + "em");
                 tI.text(text[i]);
         }
     }
@@ -307,6 +315,7 @@ export class Adhesive {
         this.handleColor = false;
         this.handleEdit = false;
         this.handleVisible = false;
+        this.handleLabel = false;
         for (var h of handles) {
             switch (h) {
                 case "close":
@@ -324,6 +333,9 @@ export class Adhesive {
                 case "visible":
                 this.handleVisible = true;
                 break;
+                case "label":
+                this.handleLabel = true;
+                break;
             }
         }
         if (this.handleColor) {
@@ -340,6 +352,9 @@ export class Adhesive {
         }
         if (this.handleNew) {
             this.addHandleNew();
+        }
+        if (this.handleLabel) {
+            this.addHandleLabel();
         }
     }
 
@@ -362,12 +377,17 @@ export class Adhesive {
 
         var p = this;
         var g = this.childrenGroup;
-        var nX = this.group.node().getBoundingClientRect().left - this.parentGroup.node().getBoundingClientRect().left + this.geometry[0] * 2;
-        var nY = this.group.node().getBoundingClientRect().top - this.parentGroup.node().getBoundingClientRect().top + this.geometry[1] * 2;
-
+        var nX = this.group.node().getBoundingClientRect().left -
+                    this.parentGroup.node().getBoundingClientRect().left +
+                    this.position[0];
+        var nY = this.group.node().getBoundingClientRect().top -
+                    this.parentGroup.node().getBoundingClientRect().top +
+                    this.position[1];
         h.on("click", function() {
-            let n = new Adhesive(p.board, g, "", p.color.slice(), p.geometry, [nX, nY]);
-            n.setFeatures(p.handles, p.draggable, p.type.node().textContent);
+            let n = new Adhesive(p.board, g, "", p.color.slice(),
+                        p.geometry, [nX, nY]);
+            n.setFeatures(p.handles, p.draggable, p.persistableChildren,
+                        p.type.node().textContent);
             n.parentObject = p;
             p.childObjects.set(n.id, n);
 
@@ -377,14 +397,40 @@ export class Adhesive {
         });
     }
 
+    addHandleLabel() {
+
+        let h = this.addHandle(4, "L");
+
+        var p = this;
+        var g = this.childrenGroup;
+        var nX = this.group.node().getBoundingClientRect().left -
+                    this.parentGroup.node().getBoundingClientRect().left +
+                    this.position[0];
+        var nY = this.group.node().getBoundingClientRect().top -
+                    this.parentGroup.node().getBoundingClientRect().top +
+                    this.position[1];
+        h.on("click", function() {
+            let n = new Adhesive(p.board, g, "",
+                        ["#ff6666","#00ff00","#7788ff"],
+                        [8,1], [nX, nY]);
+//TODO: why is it not persistable? "false/true"
+            n.setFeatures(["close","color","edit"], p.draggable, true, "Label");
+            n.parentObject = p;
+            p.childObjects.set(n.id, n);
+
+            p.board.adhesives.set(n.id, n);
+            g.raise();
+        });
+    }
+
     addHandleEdit() {
 
         let tl = this.geometry[0] / 2;
-        let hl = tl + 2;
+        let hl = tl - 2;
         let h = this.addHandle(hl, "!");
         var n = this;
         h.on("click", function() {
-            n.openTextinput(n.type, [1,0], [tl,1])
+            n.toggleTextEdit(n.type, [1.2,0], [tl,1])
         });
     }
 
@@ -392,7 +438,7 @@ export class Adhesive {
 
         let h = this.addHandle(2, "+");
         this.childrenGroup.style("visibility", "visible");
-        h.text("--");
+        h.text("\u2013");
         this.showHandleVisible();
     }
 
@@ -422,12 +468,12 @@ export class Adhesive {
             text = h.node().textContent;
         }
 
-        if (text == '--') {
+        if (text == '\u2013') {
             this.childrenGroup.style("visibility", "hidden");
             h.text("+");
         } else {
             this.childrenGroup.style("visibility", "visible");
-            h.text("--");
+            h.text("\u2013");
         }
         this.showHandleVisible();
         for (let [key, value] of this.childObjects) {
@@ -442,8 +488,8 @@ export class Adhesive {
 
     addHandleColor() {
 
-        let l = this.geometry[0] / 2 + 1;
-        l = l + "em";
+        let l = 2;
+        l = l + "px";
 //        let l = 2;
 
         var c = this.color;
@@ -485,8 +531,8 @@ export class Adhesive {
         this.draggable = true;
         var n = this.group;
 
-        var nX = this.group.node().getBoundingClientRect().left - this.parentGroup.node().getBoundingClientRect().left + this.geometry[0] * 2;
-        var nY = this.group.node().getBoundingClientRect().top - this.parentGroup.node().getBoundingClientRect().top + this.geometry[1] * 2;
+        var nX = this.group.node().getBoundingClientRect().left - this.parentGroup.node().getBoundingClientRect().left + this.position[0] + this.translatePosition[0];
+        var nY = this.group.node().getBoundingClientRect().top - this.parentGroup.node().getBoundingClientRect().top + this.position[1] + this.translatePosition[1];
 
         this.group.call(d3.drag().on("drag", function() {
 
@@ -505,11 +551,16 @@ export class Adhesive {
         if (typeof this.parentObject !== 'undefined' &&
                     typeof this.parentObject.childObjects !== 'undefined') {
             this.parentObject.childObjects.delete(this.id);
+            this.parentObject.showHandleVisible();
         }
         this.group.remove();
     }
 
     toJSON(indent="", startIndent="") {
+
+        if (! this.persistable) {
+            return "";
+        }
 
         let json = startIndent + '"' + this.id + '": {\n';
         let dindent = startIndent + indent;
@@ -531,12 +582,19 @@ export class Adhesive {
         for (let i=0; i<this.handles.length; i++) {
             h += '"' + this.handles[i] + '",';
         }
+        let t = this.group.attr("transform").replace("translate(", "")
+                    .replace(")", "").split(",");
+        this.translatePosition = [ parseInt(t[0]), parseInt(t[1]) ];
         json += dindent + '"color": [' + c.substring(0, c.length - 1) + '],\n' +
                 dindent + '"geometry": [' + this.geometry + '],\n' +
                 dindent + '"position": [' + this.position + '],\n' +
-                dindent + '"handles": [' + h.substring(0, h.length - 1) + '],\n' +
-                dindent + '"type": "' + this.type.node().textContent + '"\n'
-                startIndent + '}';
+                dindent + '"transform": [' + this.translatePosition + '],\n' +
+                dindent + '"handles": [' + h.substring(0, h.length - 1) +
+                '],\n' +
+                dindent + '"type": "' + this.type.node().textContent + '"';
+        if (this.CSS_CLASS == "adhesive") {
+            json += '\n' + startIndent + '}';
+        }
         return json;
 // board, group handles, draggable
     }
@@ -548,12 +606,13 @@ export class Adhesive {
             board.adhesiveQueue.delete(key);
             let group = board.group;
             if (typeof o["parentId"] !== 'undefined') {
-                let p = board.createAdhesive(o["parentId"]);
+                var p = board.createAdhesive(o["parentId"]);
                 group = p.childrenGroup;
             }
             let a = new Adhesive(board, group, key, o["color"],
                                     o["geometry"], o["position"]);
-            a.setFeatures(o["handles"], o["draggable"], o["type"]);
+            a.setFeatures(o["handles"], o["draggable"], o["persistable"],
+                                    o["type"]);
 /// TODO: make the constructor using "parent object" instead of "parent group"
             if (typeof o["parentId"] !== 'undefined') {
                 a.parentObject = p;
@@ -561,7 +620,7 @@ export class Adhesive {
                 p.childrenGroup.raise();
             }
             board.adhesives.set(key, a);
-            a.group.raise();
+            a.translate(o["transform"]);
             return a;
         } else {
             alert("There is no '" + adhesiveKey + "' in the adhesiveQueue");
@@ -583,10 +642,13 @@ export class NoteIt extends Adhesive {
 
     // set the basic features separatly from the constructor for more
     // control over super classes
-    setFeatures(handles=["close", "new"], draggable=true, type, title, content) {
+    setFeatures(handles=["close", "new"], draggable=true, persistable=true,
+                                                    type, title, content) {
         if (draggable) {
             this.enableDrag();
         }
+        this.persistable = persistable;
+        this.persistableChildren = persistable;
         if (typeof type === 'string') {
             this.addType(type);
         }
@@ -606,12 +668,17 @@ export class NoteIt extends Adhesive {
 
         var p = this;
         var g = this.childrenGroup;
-        var nX = this.group.node().getBoundingClientRect().left - this.parentGroup.node().getBoundingClientRect().left + this.geometry[0] * 2;
-        var nY = this.group.node().getBoundingClientRect().top - this.parentGroup.node().getBoundingClientRect().top + this.geometry[1] * 2;
-
+        var nX = this.group.node().getBoundingClientRect().left -
+                    this.parentGroup.node().getBoundingClientRect().left +
+                    this.geometry[0] * 2;
+        var nY = this.group.node().getBoundingClientRect().top -
+                    this.parentGroup.node().getBoundingClientRect().top +
+                    this.geometry[1] * 2;
         h.on("click", function() {
-            var n = new NoteIt(p.board, g, "", p.color.slice(), p.geometry, [nX,nY]);
-            n.setFeatures(p.handles, p.draggable, p.type.node().textContent, "Title", "...");
+            var n = new NoteIt(p.board, g, "", p.color.slice(),
+                                p.geometry, [nX,nY]);
+            n.setFeatures(p.handles, p.draggable, p.persistableChildren,
+                                p.type.node().textContent, "Title", "...");
             n.parentObject = p;
             p.childObjects.set(n.id, n);
             p.board.adhesives.set(n.id, n);
@@ -623,21 +690,21 @@ export class NoteIt extends Adhesive {
     addHandleEdit() {
 
         let tl = this.geometry[0] / 2;
-        let hl = tl + 2;
+        let hl = tl - 2;
         let til = this.geometry[0] - 1;
         let cl = til;
         let ch = this.geometry[1] - 3;
-        let h = this.addHandle(4, "!");
+        let h = this.addHandle(hl, "!");
         var n = this;
         h.on("click", function() {
             if (typeof n.type !== 'undefined') {
-                n.openTextinput(n.type, [1,0], [tl,1]);
+                n.toggleTextEdit(n.type, [1.2,0], [tl,1]);
             }
             if (typeof n.title !== 'undefined') {
-                n.openTextinput(n.title, [0.5,1], [til,1]);
+                n.toggleTextEdit(n.title, [0.5,1], [til,1]);
             }
             if (typeof n.content !== 'undefined') {
-                n.openTextinput(n.content, [0.5,2], [cl,ch]);
+                n.toggleTextEdit(n.content, [0.5,2], [cl,ch]);
             }
         });
     }
@@ -647,23 +714,11 @@ export class NoteIt extends Adhesive {
         let l = this.geometry[0] - 1;
 
         this.title = this.group.append("g").attr("class", "title");
-        // placeholder in case the string below ('nt') is empty
-//        var rt = this.title.append("rect")
-//                    .attr("fill", "#ffffff").attr("fill-opacity", "0")
-//                    .attr("width", l / 2 + "em").attr("height", "1em")
-//                    .attr("x", "0.5em").attr("y", "2em");
         var nt = this.title.append("text")
                     .attr("width", l + "em").attr("height", "1em")
                     .attr("x", "0.5em").attr("y", "2em")
                     .style("font-weight", "bold")
                     .text(title);
-//        var n = this;
-        // add the event to both nodes, as sometimes the text is small,
-        // sometimes big...
-//TODO: I'd prefer "focus/blur" here. Collision with "drag"?
-//        nt.on("drag", null);
-//        rt.on("mouseover", function() { n.openTextinput(n.title, [0.5,1], [l,1])});
-//        nt.on("mouseover", function() { n.openTextinput(n.title, [0.5,1], [l,1])});
     }
 
     addContent(content="...") {
@@ -672,29 +727,21 @@ export class NoteIt extends Adhesive {
         var h = this.geometry[1] - 3;
 
         this.content = this.group.append("g").attr("class", "content");
-        // placeholder in case the string below ('nt') is empty
-//        var rt = this.content.append("rect")
-//                    .attr("fill", "#ffffff").attr("fill-opacity", "0")
-//                    .attr("x", "0.5em").attr("y", "2em")
-//                    .attr("width", l / 2 + "em").attr("height", h + "em");
         var nt = this.content.append("text")
                     .attr("width", l + "em").attr("height", h + "em")
                     .attr("x", "0.5em").attr("y", "3em");
         this.setMultilineText(nt, [0.5,2], content);
-//        var n = this;
-        // add the event to both nodes, as sometimes the text is small,
-        // sometimes big...
-//TODO: I'd prefer "focus/blur" here. Collision with "drag"?
-//        nt.on("drag", null);
-//        rt.on("mouseover", function() { n.openTextinput(n.content, [0.5,2], [l, h])});
-//        nt.on("mouseover", function() { n.openTextinput(n.content, [0.5,2], [l, h])});
     }
 
     toJSON(indent="", startIndent="") {
 
+        if (! this.persistable) {
+            return "";
+        }
+
         let dindent = startIndent + indent;
         let json = super.toJSON(indent, startIndent);
-        json = json.substring(0, json.length - 1);
+//        json = json.substring(0, json.length - 2);
         if (typeof this.title !== 'undefined' &&
                 typeof this.title.node().textContent === 'string') {
             json += ',\n' + dindent + '"title": "' +
@@ -711,7 +758,9 @@ export class NoteIt extends Adhesive {
             }
             json += ',\n' + dindent + '"content": "' + t + '"';
         }
-        json += "\n" + startIndent + "}";
+        if (this.CSS_CLASS == "noteit") {
+            json += "\n" + startIndent + "}";
+        }
         return json;
     }
 
@@ -728,8 +777,8 @@ export class NoteIt extends Adhesive {
 
             let a = new NoteIt(board, group, key, o["color"],
                                     o["geometry"], o["position"]);
-            a.setFeatures(o["handles"], o["draggable"], o["type"],
-                                    o["title"], o["content"]);
+            a.setFeatures(o["handles"], o["draggable"], o["persistable"],
+                            o["type"], o["title"], o["content"]);
 /// TODO: make the constructor using "parent object" instead of "parent group"
             if (typeof o["parentId"] !== 'undefined') {
                 a.parentObject = p;
@@ -737,6 +786,7 @@ export class NoteIt extends Adhesive {
                 p.childrenGroup.raise();
             }
             board.adhesives.set(key, a);
+            a.translate(o["transform"]);
             return a;
         } else {
             alert("There is no '" + adhesiveKey + "' in the adhesiveQueue");
@@ -753,8 +803,10 @@ export class Stack {
         new Adhesive(board, group, "stack0", color, geometry, [ position[0] + 2, position[1] + 2]);
         let n = new NoteIt(board, group, "stack", color, geometry, [position[0], position[1]]);
         n.addType("Type");
-        n.handles = ["close", "new", "color", "edit", "visible"];
+        n.handles = ["close", "new", "color", "edit", "visible", "label"];
         n.draggable = true;
+        n.persistable = true;
+        n.persistableChildren = true;
         n.addHandleNew();
         n.addHandleVisible();
         n.addHandleColor();
