@@ -478,7 +478,9 @@ export class Adhesive {
         this.showHandleVisible();
         for (let [key, value] of this.childObjects) {
 
-            value.toggleHandleVisible(text);
+            if (value.handleVisible) {
+                value.toggleHandleVisible(text);
+            }
         }
     }
 
@@ -618,6 +620,7 @@ export class Adhesive {
                 a.parentObject = p;
                 p.childObjects.set(key, a);
                 p.childrenGroup.raise();
+                p.toggleHandleVisible();
             }
             board.adhesives.set(key, a);
             a.translate(o["transform"]);
@@ -784,6 +787,7 @@ export class NoteIt extends Adhesive {
                 a.parentObject = p;
                 p.childObjects.set(key, a);
                 p.childrenGroup.raise();
+                p.toggleHandleVisible();
             }
             board.adhesives.set(key, a);
             a.translate(o["transform"]);
