@@ -9,4 +9,6 @@ package ch.inofix.sketchboard.constants;
 public class SketchBoardPortletKeys {
 // TODO @deprecated use PortletKeys.SKETCH_BOARD instead..
     public static final String SKETCH_BOARD = "ch_inofix_sketchboard_portlet_SketchBoardPortlet";
+    public static final String SKETCH_BOARD_ADMIN =
+    		  "ch_inofix_sketchboard_portlet_SketchBoardAdminPortlet";
 }
