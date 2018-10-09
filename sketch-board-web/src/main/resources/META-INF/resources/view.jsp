@@ -1,3 +1,7 @@
+<%--
+    view.jsp
+--%>
+
 <%@ include file="/init.jsp" %>
 
 <%

@@ -1,9 +1,5 @@
 <%--
     init.jsp
-
-    Created:    2018-06-16 by Michael Lustenberger
-    Modified:   2018-06-26 by Michael Lustenberger
-    Version:    1.0.0
 --%>
 
 <%@ taglib uri="http://java.sun.com/jsp/jstl/core" prefix="c" %>

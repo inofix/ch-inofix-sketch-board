@@ -7,7 +7,6 @@ CLASSPATH
 bin/
 build/
 node_modules/
-package-lock.json
 .*.swp
 target/
 .sass-cache
